@@ -1,6 +1,7 @@
 import { type PointerEvent as ReactPointerEvent, useEffect, useRef, useState } from "react"
 
 import { type HSV, hexToHsv, hsvToHex } from "@/color"
+import { useT } from "@/i18n"
 
 // Our own color picker, replacing the browser's native one (which lagged while
 // dragging and looked out of place). A saturation × brightness square plus a hue
@@ -40,6 +41,7 @@ function startDrag(
 export function ColorPicker({ value, onDrag, onCommit, onClose }: Props) {
   // We keep HSV in local state (not just the hex) so the hue survives when the
   // color goes fully grey or black — otherwise the strip would jump to red.
+  const t = useT()
   const [hsv, setHsv] = useState<HSV>(() => hexToHsv(value))
   const latest = useRef(hsv)
   const rootRef = useRef<HTMLDivElement>(null)
@@ -69,7 +71,7 @@ export function ColorPicker({ value, onDrag, onCommit, onClose }: Props) {
 
   const hex = hsvToHex(hsv)
   return (
-    <div ref={rootRef} className="pm-picker" role="dialog">
+    <div ref={rootRef} className="pm-picker" role="dialog" aria-label={t("color.custom")}>
       <div
         className="pm-picker-sv"
         style={{ background: `linear-gradient(to top, #000, transparent), linear-gradient(to right, #fff, hsl(${hsv.h} 100% 50%))` }}

@@ -26,10 +26,13 @@
   },
   "piece": {
     "none": "None",
-    "noColors": "This piece has fixed colors."
+    "noColors": "This piece has fixed colors.",
+    "option": "{layer} {n}"
   },
   "color": {
-    "custom": "Custom color"
+    "custom": "Custom color",
+    "option": "{group} color {n}",
+    "customFor": "Custom {group} color"
   },
   "card": {
     "pickTitle": "Choose a card",

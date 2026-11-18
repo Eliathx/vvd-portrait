@@ -85,7 +85,7 @@ function PieceOption({ look, category, partId, label, selected, onPick }: {
   const preview = useMemo(() => ({ ...look, parts: { ...look.parts, [category]: partId } }), [look, category, partId])
   const image = usePortrait(preview)
   return (
-    <button type="button" className="pm-piece" aria-pressed={selected} title={label} onClick={onPick}>
+    <button type="button" className="pm-piece" aria-pressed={selected} aria-label={label} title={label} onClick={onPick}>
       <PixelCanvas image={image} scale={1} />
     </button>
   )
@@ -109,12 +109,14 @@ function ColorRow({ label, value, palette, onPick, onDrag, onClosePicker }: {
     <div className="pm-color-row">
       <span className="pm-label">{label}</span>
       <div className="pm-swatches">
-        {palette.map((hex) => (
-          <button key={hex} type="button" className="pm-swatch" aria-pressed={hex === value} title={hex}
+        {palette.map((hex, i) => (
+          <button key={hex} type="button" className="pm-swatch" aria-pressed={hex === value}
+            aria-label={t("color.option", { group: label, n: i + 1 })} title={hex}
             style={{ background: hex }} onClick={() => onPick(hex)} />
         ))}
         <span className="pm-picker-anchor">
           <button type="button" className="pm-swatch pm-swatch-custom" aria-pressed={custom} aria-expanded={open}
+            aria-label={t("color.customFor", { group: label })} aria-haspopup="dialog"
             title={t("color.custom")} style={custom ? { background: value } : undefined}
             onClick={() => setOpen((o) => !o)} />
           {open && <ColorPicker value={value} onDrag={onDrag} onCommit={onPick} onClose={close} />}
@@ -325,8 +327,9 @@ function PortraitMaker({ data, actions, handle, canEdit, worldId }: {
               <PieceOption look={look} category={tab} partId={NONE} label={t("piece.none")}
                 selected={look.parts[tab] === NONE} onPick={() => setPart(tab, NONE)} />
             )}
-            {partsIn(tab).map((p) => (
-              <PieceOption key={p.id} look={look} category={tab} partId={p.id} label={p.id}
+            {partsIn(tab).map((p, i) => (
+              <PieceOption key={p.id} look={look} category={tab} partId={p.id}
+                label={t("piece.option", { layer: t(`layer.${tab}`), n: i + 1 })}
                 selected={look.parts[tab] === p.id} onPick={() => setPart(tab, p.id)} />
             ))}
           </div>
@@ -415,6 +418,9 @@ const CSS = `
 .pm-swatch { position: relative; width: 34px; height: 34px; padding: 0; border-radius: 8px; cursor: pointer;
   border: 1px solid rgba(0,0,0,0.35); box-shadow: inset 0 0 0 1px rgba(255,255,255,0.12); }
 .pm-swatch:hover { transform: translateY(-1px); }
+.pm-button:focus-visible, .pm-tab:focus-visible, .pm-piece:focus-visible, .pm-swatch:focus-visible,
+.pm-link:focus-visible, .pm-cards-item:focus-visible, .pm-cards-create:focus-visible {
+  outline: 2px solid var(--pm-accent); outline-offset: 2px; }
 .pm-swatch[aria-pressed="true"] { outline: 2px solid var(--pm-accent); outline-offset: 2px; }
 .pm-swatch-custom { background: conic-gradient(from 90deg, #c0504d, #d9a441, #4fa38a, #3a5fb8, #7d3fa0, #c0504d); }
 
