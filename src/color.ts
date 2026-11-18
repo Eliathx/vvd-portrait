@@ -1,9 +1,10 @@
-// Turning ONE color the user picked into a 3-tone ramp (light, mid, dark).
+// Color math: turning ONE color the user picked into the shades a piece needs,
+// plus a perceptual distance for the taste rules.
 //
-// We work in HSL because "lighter" and "darker" are just the L channel there.
-// On top of that we do a little hue shifting, the classic pixel-art trick:
-// highlights lean warm (toward yellow) and shadows lean cool (toward blue),
-// so the shading looks painted instead of just "the same color, greyer".
+// Shading works in HSL because "lighter" and "darker" are just the L channel
+// there. Without the artist's own ramp we add a little hue shifting, the classic
+// pixel-art trick: highlights lean warm (toward yellow) and shadows lean cool
+// (toward blue), so the shading looks painted instead of "the same color, greyer".
 
 export type RGB = [number, number, number]
 

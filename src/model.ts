@@ -95,7 +95,7 @@ export type Part = {
  * - `label`  names it in the editor: a key under "region" in src/locales/*.json
  *            ("tie" → "Tie"). Two pieces can say "tie" and share the text.
  * - `group`  the stored color it follows. Pieces that use the same group share
- *            the color, so swapping a suit for a tunic keeps your outfit color.
+ *            the color, so swapping one suit for another keeps your outfit color.
  * - `tones`  the exact colors used in the PNG. The FIRST is the main one (the
  *            color the swatch stands for); the others are its highlights and
  *            shadows, in any order, and keep their distance from it.

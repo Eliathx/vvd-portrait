@@ -147,7 +147,10 @@ const CHECKS: { [K in Check["kind"]]: {
 }
 
 const isCheck = (r: Rule): r is Check => r.kind in CHECKS
-const kindOf = <C extends Check>(r: C) => CHECKS[r.kind] as unknown as { active: (r: C, s: Seen) => boolean; margin: (r: C, c: Look["colors"]) => number }
+// CHECKS[r.kind] is the entry for r's own kind, but TypeScript can't link a
+// union member to its table entry by itself, so we state it once, here.
+const kindOf = <C extends Check>(r: C) =>
+  CHECKS[r.kind] as unknown as { active: (r: C, s: Seen) => boolean; margin: (r: C, c: Look["colors"]) => number }
 const margin = (r: Check, colors: Look["colors"]) => kindOf(r).margin(r, colors)
 /** Groups a check reads: re-rolling any of them can break or fix it. */
 const reads = (r: Check): string[] => [r.change, r.from]

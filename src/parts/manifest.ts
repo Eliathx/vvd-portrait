@@ -12,7 +12,7 @@
 //                   descriptive name never silently turns into another piece.
 //      A back image (drawn behind body and face) sits next to it with ".back":
 //        src/parts/base/hair/hair-long.png + hair-long.back.png
-//   3. Import it below and add one line to DRAWN_PARTS:
+//   3. Import it below and add one line to PARTS:
 //        id        the file name without .png
 //        category  the layer it goes on
 //        zones     which color group paints zone 1, then zone 2 (0–2 entries)
@@ -29,10 +29,6 @@
 //                  tones → the exact colors in the PNG, MAIN color first.
 
 import { region, type Part } from "@/model"
-
-// import hairLong from "./base/hair/hair-long.png"
-// import hairLongBack from "./base/hair/hair-long.back.png"
-// import eyebrowsThick from "./base/eyebrows/eyebrows-thick.png"
 
 import backgroundCircle from "./base/background/background-circle.png"
 import backgroundDither from "./base/background/background-dither.png"
@@ -70,10 +66,8 @@ import noseNormal from "./base/nose/nose-normal.png"
 import noseWider from "./base/nose/nose-wider.png"
 import noseWider2 from "./base/nose/nose-wider-2.png"
 
-const DRAWN_PARTS: Part[] = [
-  // zones: [] = fixed colors, drawn as is. Repaint with the markers to recolor
-  // (eyebrows → ["hair"], head/ears/nose → ["skin"], body → ["outfit", "outfit2"],
-  // background → ["background"]).
+export const PARTS: Part[] = [
+  // zones: [] + no regions = fixed colors, drawn as is.
   // Backgrounds: the base tone first (what the swatch shows), then the pattern tone.
   { id: "background-solid", category: "background", zones: [], src: backgroundSolid, regions: [
     region("background", "background", ["#4a5647"]),
@@ -125,8 +119,6 @@ const DRAWN_PARTS: Part[] = [
   { id: "hair-male-long", category: "hair", zones: ["hair", "skin"], src: hairMaleLong },
   { id: "hair-male-balding", category: "hair", zones: ["hair", "skin"], src: hairMaleBalding },
 ]
-
-export const PARTS: Part[] = DRAWN_PARTS
 
 const byId = new Map(PARTS.map((p) => [p.id, p]))
 
