@@ -389,7 +389,8 @@ function PortraitMaker({ data, actions, handle, canEdit, worldId }: {
   )
   // Analytics (see ANALYTICS.md + vvd.json → analytics.actions): what people DO,
   // never who they are. Fire-and-forget; a host without analytics just skips it.
-  const track = useHost()?.analytics?.track
+  // Keep the call on the object: a detached `track` would lose its `this`.
+  const analytics = useHost()?.analytics
   // A hand edit after Randomize: "random" becomes "random_edited", and we count
   // how many edits followed. Done in the same transaction as the edit (one undo step).
   const editByHand = (edit: () => void) => actions.transact(() => {
@@ -400,7 +401,7 @@ function PortraitMaker({ data, actions, handle, canEdit, worldId }: {
   })
   const pickPiece = (category: Category, id: string) => {
     editByHand(() => setPart(category, id))
-    track?.("piece_picked", { layer: category, piece: id || "none" })
+    analytics?.track("piece_picked", { layer: category, piece: id || "none" })
   }
   const commitColor = (group: ColorGroup, hex: string) => {
     editByHand(() => setColor(group, hex))
