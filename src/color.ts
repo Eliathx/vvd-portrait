@@ -45,6 +45,32 @@ function hueToward(h: number, target: number, amount: number): number {
   return (h + step + 360) % 360
 }
 
+// ── Perceptual distance ──────────────────────────────────────────────────────
+
+/** RGB → OKLab, a space where equal distances look equally different to the eye. */
+function toOklab([r, g, b]: RGB): [number, number, number] {
+  const lin = (c: number) => ((c /= 255) <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4)
+  const [lr, lg, lb] = [lin(r), lin(g), lin(b)]
+  const l = Math.cbrt(0.4122214708 * lr + 0.5363325363 * lg + 0.0514459929 * lb)
+  const m = Math.cbrt(0.2119034982 * lr + 0.6806995451 * lg + 0.1073969566 * lb)
+  const s = Math.cbrt(0.0883024619 * lr + 0.2817188376 * lg + 0.6299787005 * lb)
+  return [
+    0.2104542553 * l + 0.793617785 * m - 0.0040720468 * s,
+    1.9779984951 * l - 2.428592205 * m + 0.4505937099 * s,
+    0.0259040371 * l + 0.7827717662 * m - 0.808675766 * s,
+  ]
+}
+
+/**
+ * How different two colors LOOK, 0 = identical. Rough scale: under 0.03 you
+ * can't tell them apart, ~0.08 is "clearly two colors", black vs skin is ~0.55.
+ */
+export function colorDistance(a: string, b: string): number {
+  const [l1, a1, b1] = toOklab(hexToRgb(a))
+  const [l2, a2, b2] = toOklab(hexToRgb(b))
+  return Math.hypot(l1 - l2, a1 - a2, b1 - b2)
+}
+
 // ── HSV, for the color picker ────────────────────────────────────────────────
 // The picker's square is saturation (x) × value/brightness (y), and its strip is
 // hue — HSV maps onto that layout directly.

@@ -2,8 +2,9 @@
 // random portraits.
 
 import { COLOR_GROUPS, LAYERS, NONE, OFFSET_RANGE, type Category, type ColorGroup, type Look } from "@/model"
-import { DEFAULT_COLORS, PALETTES } from "@/palettes"
+import { DEFAULT_COLORS } from "@/palettes"
 import { findPart, partsIn } from "@/parts/manifest"
+import { rollColor, rollPiece, withTaste } from "@/taste"
 
 const isHex = (v: unknown): v is string => typeof v === "string" && /^#[0-9a-f]{6}$/i.test(v)
 
@@ -48,17 +49,18 @@ const EMPTY_CHANCE = 0.3
 function rollLook(): Look {
   const parts = {} as Record<Category, string>
   for (const layer of LAYERS) {
-    const ids = partsIn(layer.id).map((p) => p.id)
-    const empty = layer.optional && (ids.length === 0 || Math.random() < (layer.emptyChance ?? EMPTY_CHANCE))
-    parts[layer.id] = empty ? NONE : (pick(ids) ?? NONE)
+    const none = partsIn(layer.id).length === 0
+    const empty = layer.optional && (none || Math.random() < (layer.emptyChance ?? EMPTY_CHANCE))
+    parts[layer.id] = empty ? NONE : rollPiece(layer.id) // rare pieces stay rare (taste.ts)
   }
   const colors = {} as Record<ColorGroup, string>
-  for (const group of COLOR_GROUPS) colors[group] = pick(PALETTES[group])
+  for (const group of COLOR_GROUPS) colors[group] = rollColor(group) // rare swatches stay rare (taste.ts)
   // Features land where the template puts them; only the brows get a little
   // play (±1px), which is enough to change the expression.
   const offsets = {} as Record<Category, number>
   for (const layer of LAYERS) offsets[layer.id] = layer.id === "eyebrows" ? pick([-1, 0, 0, 1]) : 0
-  return { parts, colors, offsets }
+  // Colors are rolled independently, then the taste rules fix clashes (see taste.ts).
+  return withTaste({ parts, colors, offsets })
 }
 
 export function sameLook(a: Look, b: Look): boolean {
