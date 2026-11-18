@@ -34,11 +34,13 @@ import { region, type Part } from "@/model"
 // import hairLongBack from "./base/hair/hair-long.back.png"
 // import eyebrowsThick from "./base/eyebrows/eyebrows-thick.png"
 
+import backgroundCircle from "./base/background/background-circle.png"
+import backgroundDither from "./base/background/background-dither.png"
 import backgroundScribble from "./base/background/background-scribble.png"
+import backgroundSolid from "./base/background/background-solid.png"
 import bodyDarkArmor from "./base/body/body-dark-armor.png"
 import bodyDarkMetal from "./base/body/body-dark-metal.png"
 import bodySuit from "./base/body/body-suit.png"
-import bodyTunic from "./base/body/body-tunic.png"
 import beardBalbo from "./base/beard/beard-balbo.png"
 import beardMoustache from "./base/beard/beard-moustache.png"
 import beardMuttonChops from "./base/beard/beard-mutton-chops.png"
@@ -72,11 +74,22 @@ const DRAWN_PARTS: Part[] = [
   // zones: [] = fixed colors, drawn as is. Repaint with the markers to recolor
   // (eyebrows → ["hair"], head/ears/nose → ["skin"], body → ["outfit", "outfit2"],
   // background → ["background"]).
-  { id: "background-scribble", category: "background", zones: [], src: backgroundScribble },
-  { id: "body-tunic", category: "body", zones: [], src: bodyTunic },
+  // Backgrounds: the base tone first (what the swatch shows), then the pattern tone.
+  { id: "background-solid", category: "background", zones: [], src: backgroundSolid, regions: [
+    region("background", "background", ["#4a5647"]),
+  ] },
+  { id: "background-circle", category: "background", zones: [], src: backgroundCircle, regions: [
+    region("background", "background", ["#4a5647", "#40493d"]),
+  ] },
+  { id: "background-dither", category: "background", zones: [], src: backgroundDither, regions: [
+    region("background", "background", ["#4a5647", "#40493d"]),
+  ] },
+  { id: "background-scribble", category: "background", zones: [], src: backgroundScribble, regions: [
+    region("background", "background", ["#333941", "#434d5b"]),
+  ] },
   { id: "body-suit", category: "body", zones: ["skin"], src: bodySuit, regions: [
     region("suit", "outfit", ["#c47f59", "#e9915c", "#b5704a", "#855337"]),
-    region("tie", "outfit2", ["#6a4535", "#40291f"]),
+    region("tie", "outfit2", ["#6a4535", "#40291f"], { shadows: ["#573729"] }), // the pin's shadow on the tie
     region("pin", "accent", ["#db9f40"]),
   ] },
   // The neck is painted with the skin's dark + darkest markers, so it follows the

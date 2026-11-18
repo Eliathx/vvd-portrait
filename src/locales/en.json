@@ -23,6 +23,7 @@
     "accent": "Accent"
   },
   "region": {
+    "background": "Background",
     "suit": "Suit",
     "tie": "Tie",
     "pin": "Pin"
@@ -34,11 +35,11 @@
   },
   "piece": {
     "none": "None",
-    "noColors": "This piece has fixed colors.",
     "option": "{layer} {n}"
   },
   "color": {
     "custom": "Custom color",
+    "hex": "Hex color",
     "option": "{group} color {n}",
     "customFor": "Custom {group} color"
   },
@@ -56,6 +57,9 @@
     "downloaded": "Saved {name}.png. Drop it on the card.",
     "uploaded": "Saved to this world’s images. Pick it on the card.",
     "show": "Open card"
+  },
+  "toast": {
+    "close": "Dismiss"
   },
   "presence": {
     "label": "Also here: {names}"

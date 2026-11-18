@@ -59,6 +59,15 @@ export type ColorGroup = "background" | "skin" | "hair" | "eyes" | "outfit" | "o
 export const COLOR_GROUPS: ColorGroup[] = ["skin", "hair", "eyes", "outfit", "outfit2", "accent", "background"]
 
 /**
+ * Where a group's color is edited. A group with a home shows its swatches only
+ * on that tab; other pieces that use it (hair's scalp, a collar's neck) just
+ * point there. Groups without one show on every piece that uses them.
+ */
+export const COLOR_HOME: Partial<Record<ColorGroup, Category>> = {
+  skin: "head",
+}
+
+/**
  * One piece of art. `zones[0]` says which color group paints the zone-1 markers,
  * `zones[1]` the zone-2 markers (max 2). A piece with no zones is never recolored.
  */
@@ -91,9 +100,18 @@ export type Part = {
  *            color the swatch stands for); the others are its highlights and
  *            shadows, in any order, and keep their distance from it.
  */
-export type Region = { label: string; group: ColorGroup; tones: string[] }
+export type Region = { label: string; group: ColorGroup; tones: string[]; shadows?: string[] }
 
-export const region = (label: string, group: ColorGroup, tones: string[]): Region => ({ label, group, tones })
+/**
+ * `shadows`: colors in the PNG that are a shadow cast ON this region (say, under
+ * a pin on the tie). They're painted as the region's main color under a 25%
+ * black veil, so the shadow reads right whatever color the region is.
+ */
+export const region = (label: string, group: ColorGroup, tones: string[], opts: { shadows?: string[] } = {}): Region =>
+  ({ label, group, tones, ...opts })
+
+/** How dark a region's `shadows` are: the opacity of the black veil over its main color. */
+export const SHADOW_OPACITY = 0.25
 
 /**
  * How far (in pixels, up or down) a movable layer can be nudged. Vertical only:

@@ -9,7 +9,7 @@
 
 import { hexToRgb, makeRamp, shadeLike, type ArtRamp, type RGB } from "@/color"
 import { MARKERS } from "@/markers"
-import { HEIGHT, LAYERS, NONE, WIDTH, type Look, type Part } from "@/model"
+import { HEIGHT, LAYERS, NONE, SHADOW_OPACITY, WIDTH, type Look, type Part } from "@/model"
 import { ART_RAMPS } from "@/palettes"
 import { findPart } from "@/parts/manifest"
 
@@ -68,7 +68,7 @@ const TOLERANCE = 6
 export function recolor(
   source: ImageData,
   zoneColors: { hex: string; art?: ArtRamp }[],
-  regions: { hex: string; tones: string[] }[] = [],
+  regions: { hex: string; tones: string[]; shadows?: string[] }[] = [],
 ): ImageData {
   const swaps: { marker: RGB; color: RGB }[] = []
   zoneColors.forEach(({ hex, art }, zone) => {
@@ -76,9 +76,12 @@ export function recolor(
     MARKERS[zone]?.forEach((marker, tone) => swaps.push({ marker, color: ramp[tone] }))
   })
   // A region's own tones work just like markers: each drawn tone → its shade of the pick.
-  for (const { hex, tones } of regions) {
+  for (const { hex, tones, shadows = [] } of regions) {
     const shades = shadeLike(hex, tones)
     tones.forEach((tone, i) => swaps.push({ marker: hexToRgb(tone), color: shades[i] }))
+    // A cast shadow: the main color under a black veil (what a 25% black overlay would look like).
+    const veiled = shades[0].map((c) => Math.round(c * (1 - SHADOW_OPACITY))) as RGB
+    shadows.forEach((tone) => swaps.push({ marker: hexToRgb(tone), color: veiled }))
   }
 
   const out = new ImageData(new Uint8ClampedArray(source.data), source.width, source.height)
@@ -109,7 +112,7 @@ export async function renderImage(src: string, part: Part, look: Look): Promise<
   return recolor(
     pixels,
     part.zones.map((group) => ({ hex: look.colors[group], art: ART_RAMPS[group] })),
-    (part.regions ?? []).map((r) => ({ hex: look.colors[r.group], tones: r.tones })),
+    (part.regions ?? []).map((r) => ({ hex: look.colors[r.group], tones: r.tones, shadows: r.shadows })),
   )
 }
 

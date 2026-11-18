@@ -10,10 +10,11 @@ import { Facepile, PRESENCE_CSS } from "@/Presence"
 import { hexToRgb } from "@/color"
 import { useT } from "@/i18n"
 import { randomLook, resolveLook } from "@/look"
-import { COLOR_GROUPS, HEIGHT, LAYERS, NONE, OFFSET_RANGE, WIDTH, type Category, type ColorGroup, type Look } from "@/model"
+import { COLOR_GROUPS, COLOR_HOME, HEIGHT, LAYERS, NONE, OFFSET_RANGE, WIDTH, type Category, type ColorGroup, type Look } from "@/model"
 import { PALETTES } from "@/palettes"
 import { findPart, partsIn } from "@/parts/manifest"
 import { renderLook, toPngBlob } from "@/render"
+import { TOAST_CSS, ToastProvider, useToast } from "@/Toast"
 
 /** Layers that have art. A layer with no pieces yet (say, hats) gets no tab; it appears once a piece is added. */
 const SHOWN_LAYERS = LAYERS.filter((l) => partsIn(l.id).length > 0)
@@ -97,6 +98,19 @@ function NoneIcon() {
   )
 }
 
+/** A picture with a plus: put this portrait on a card. */
+function AddToCardIcon() {
+  return (
+    <svg {...iconProps}>
+      <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h7" />
+      <path d="m3 16 5-5 9 9" />
+      <circle cx="9" cy="8" r="1.5" />
+      <path d="M19 3v6" />
+      <path d="M16 6h6" />
+    </svg>
+  )
+}
+
 function DownloadIcon() {
   return (
     <svg {...iconProps}>
@@ -164,7 +178,7 @@ function ColorRow({ label, value, palette, onPick, onDrag, onClosePicker }: {
   return (
     <div className="pm-color-row">
       <span className="pm-label">{label}</span>
-      <div className="pm-swatches">
+      <div className="pm-swatches" style={{ "--pm-swatch-count": palette.length + 1 } as CSSProperties}>
         {palette.map((hex, i) => (
           <button key={hex} type="button" className="pm-swatch" aria-pressed={hex === value}
             aria-label={t("color.option", { group: label, n: i + 1 })} title={hex}
@@ -207,11 +221,26 @@ type Data = {
   colors: Readonly<Record<string, string>>
   offsets: Readonly<Record<string, number>>
   cardId: string | null
+  origin?: Origin | null
+  editsSinceRandom?: number
 }
+/** See `origin` in codec.ts. */
+type Origin = "random" | "random_edited"
+
+/**
+ * Edits after Randomize as a few buckets, not a raw count: analytics wants few
+ * distinct values. "0" = kept as rolled, "1-5" = touched up, "6+" = Randomize was
+ * just a starting point. "n/a" = never randomized.
+ */
+type EditsBucket = "n/a" | "0" | "1-5" | "6+"
+const editsBucket = (origin: Origin | null | undefined, n = 0): EditsBucket =>
+  !origin ? "n/a" : n === 0 ? "0" : n <= 5 ? "1-5" : "6+"
 type Actions = {
   map(name: "parts" | "colors"): { set(key: string, value: string): void }
   map(name: "offsets"): { set(key: string, value: number): void }
   set(name: "cardId", value: string | null): void
+  set(name: "origin", value: Origin | null): void
+  set(name: "editsSinceRandom", value: number): void
   transact(fn: () => void): void
 }
 
@@ -224,11 +253,16 @@ type CardStatus = "idle" | "saving" | AddResult | "error"
  * picking puts the portrait on that Card. The last Card is remembered by id
  * (never its name) so the picker can mark it.
  */
-function CardAction({ portrait, cardId, worldId, onLinked, onShow, before, after }: {
+function CardAction({ portrait, cardId, worldId, origin, edits, onLinked, onShow, tools, children }: {
   portrait: ImageData | null
-  /** Buttons that sit in the same row, left and right of "Add to card". */
-  before?: ReactNode
-  after?: ReactNode
+  /** How the portrait was made, reported with the add (analytics only). */
+  origin: Origin | "hand_picked"
+  /** Hand edits after Randomize, bucketed so the dashboard can break it down. */
+  edits: EditsBucket
+  /** Secondary buttons for the floating bar; "Add to card" comes last, as the primary. */
+  tools?: ReactNode
+  /** The portrait frame the bar floats over. */
+  children: ReactNode
   cardId: string | null
   worldId: string
   onLinked: (cardId: string) => void
@@ -243,7 +277,7 @@ function CardAction({ portrait, cardId, worldId, onLinked, onShow, before, after
   const cards = useCards()
   const [open, setOpen] = useState(false)
   const [status, setStatus] = useState<CardStatus>("idle")
-  const [target, setTarget] = useState<string | null>(null)
+  const toast = useToast()
   const close = useCallback(() => setOpen(false), [])
 
   // Names are read live from the world, so a rename shows up here too.
@@ -251,47 +285,43 @@ function CardAction({ portrait, cardId, worldId, onLinked, onShow, before, after
 
   const send = async (id: string) => {
     if (!portrait) return
+    const name = nameOf(id)
     setOpen(false)
-    setTarget(id)
     setStatus("saving")
+    toast({ message: t("card.saving", { name }), sticky: true })
     try {
-      const result = await addPortraitToCard({ portrait, cardId: id, cardName: nameOf(id), worldId, media, documents })
+      const result = await addPortraitToCard({ portrait, cardId: id, cardName: name, worldId, media, documents })
       onLinked(id)
       setStatus(result)
+      const done = { assigned: "card.done", uploaded: "card.uploaded", downloaded: "card.downloaded" } as const
+      toast({ tone: "success", message: t(done[result], { name }), action: { label: t("card.show"), onClick: () => onShow(id) } })
       // Show the result right away, beside the portrait, without leaving the tool.
       if (result !== "downloaded") onShow(id)
-      host?.analytics?.track("portrait_added_to_card", { result, relink: id === cardId ? "same" : "new" })
+      host?.analytics?.track("portrait_added_to_card", { result, relink: id === cardId ? "same" : "new", origin, edits })
     } catch (err) {
       console.error("[portrait-maker] add to card failed", err)
       setStatus("error")
+      toast({ tone: "error", message: t("card.error") })
     }
   }
 
-  const name = nameOf(target)
-
   return (
     <div className="pm-card-action">
-      <div className="pm-actions">
-        {before}
-        <span className="pm-picker-anchor">
-          <button type="button" className="pm-button pm-primary" disabled={!portrait || status === "saving"}
-            aria-expanded={open} aria-haspopup="dialog" onClick={() => setOpen((o) => !o)}>
-            {t("action.addToCard")}
-          </button>
-          {open && <CardPicker cards={cards} current={cardId} onPick={(id) => void send(id)} onClose={close} />}
-        </span>
-        {after}
+      <div className="pm-frame-wrap">
+        {children}
+        {/* Floats over the portrait; shows on hover, keyboard focus, or while busy. */}
+        <div className="pm-toolbar" data-active={open || status === "saving" ? "" : undefined}>
+          {tools}
+          <span className="pm-picker-anchor">
+            <button type="button" className="pm-tool pm-tool-primary" disabled={!portrait || status === "saving"}
+              aria-label={t("action.addToCard")} title={t("action.addToCard")}
+              aria-expanded={open} aria-haspopup="dialog" onClick={() => setOpen((o) => !o)}>
+              <AddToCardIcon />
+            </button>
+            {open && <CardPicker cards={cards} current={cardId} onPick={(id) => void send(id)} onClose={close} />}
+          </span>
+        </div>
       </div>
-      <p className="pm-card-status" role="status">
-        {status === "saving" && t("card.saving", { name })}
-        {status === "error" && <span className="pm-card-error">{t("card.error")}</span>}
-        {status === "assigned" && <span>{t("card.done", { name })}</span>}
-        {status === "uploaded" && <span>{t("card.uploaded", { name })}</span>}
-        {status === "downloaded" && <span>{t("card.downloaded", { name })}</span>}
-        {(status === "assigned" || status === "uploaded" || status === "downloaded") && target && (
-          <button type="button" className="pm-link" onClick={() => onShow(target)}>{t("card.show")}</button>
-        )}
-      </p>
     </div>
   )
 }
@@ -357,16 +387,34 @@ function PortraitMaker({ data, actions, handle, canEdit, worldId }: {
     (group: ColorGroup) => setDraft((d) => (d && d.group === group && d.from === undefined ? null : d)),
     [],
   )
+  // Analytics (see ANALYTICS.md + vvd.json → analytics.actions): what people DO,
+  // never who they are. Fire-and-forget; a host without analytics just skips it.
+  const track = useHost()?.analytics?.track
+  // A hand edit after Randomize: "random" becomes "random_edited", and we count
+  // how many edits followed. Done in the same transaction as the edit (one undo step).
+  const editByHand = (edit: () => void) => actions.transact(() => {
+    edit()
+    if (!data.origin) return // hand-picked from the start: nothing to count
+    if (data.origin === "random") actions.set("origin", "random_edited")
+    actions.set("editsSinceRandom", (data.editsSinceRandom ?? 0) + 1)
+  })
+  const pickPiece = (category: Category, id: string) => {
+    editByHand(() => setPart(category, id))
+    track?.("piece_picked", { layer: category, piece: id || "none" })
+  }
   const commitColor = (group: ColorGroup, hex: string) => {
-    setColor(group, hex)
+    editByHand(() => setColor(group, hex))
     setDraft((d) => (d && d.group === group ? { group, hex, from: look.colors[group] } : d))
   }
+  const nudge = (category: Category, dy: number) => editByHand(() => setOffset(category, dy))
   const randomize = () => {
     const next = randomLook(look)
     actions.transact(() => { // one undo step, one sync message
       for (const layer of LAYERS) setPart(layer.id, next.parts[layer.id])
       for (const layer of LAYERS) if (layer.movable) setOffset(layer.id, next.offsets[layer.id])
       for (const group of COLOR_GROUPS) setColor(group, next.colors[group])
+      actions.set("origin", "random")
+      actions.set("editsSinceRandom", 0)
     })
   }
   const download = async () => {
@@ -386,32 +434,51 @@ function PortraitMaker({ data, actions, handle, canEdit, worldId }: {
   const colorRows: { group: ColorGroup; label: string }[] = []
   for (const g of selected?.zones ?? []) colorRows.push({ group: g, label: t(`group.${g}`) })
   for (const r of selected?.regions ?? []) colorRows.push({ group: r.group, label: t(`region.${r.label}`) })
-  const rows = colorRows.filter((row, i) => colorRows.findIndex((o) => o.group === row.group) === i)
+  const unique = colorRows.filter((row, i) => colorRows.findIndex((o) => o.group === row.group) === i)
+  // A group with a home tab (skin → Head) is edited only there.
+  const rows = unique.filter(({ group }) => !COLOR_HOME[group] || COLOR_HOME[group] === tab)
+
+  const frame = (
+    <div className="pm-frame">
+      <div className="pm-mat"><PixelCanvas image={portrait} scale={scale} /></div>
+    </div>
+  )
 
   return (
-    <div ref={rootRef} className={"pm" + (narrow ? " pm-narrow" : "")} style={{ "--pm-accent": accent } as CSSProperties}>
-      <style>{CSS + PRESENCE_CSS}</style>
+    // The shell doesn't scroll, so toasts stay pinned to the bottom of the tool.
+    <div className="pm-shell" style={{ "--pm-accent": accent } as CSSProperties}>
+    <style>{CSS + PRESENCE_CSS + TOAST_CSS}</style>
+    <ToastProvider closeLabel={t("toast.close")}>
+    <div ref={rootRef} className={"pm" + (narrow ? " pm-narrow" : "")}>
 
       <div className="pm-stage">
         <Facepile handle={handle} />
-        <div className="pm-frame">
-          <div className="pm-mat"><PixelCanvas image={portrait} scale={scale} /></div>
-        </div>
-        {canEdit && (
-          <CardAction portrait={portrait} cardId={data.cardId ?? null} worldId={worldId}
+        {canEdit ? (
+          <CardAction portrait={portrait} cardId={data.cardId ?? null} worldId={worldId} origin={data.origin ?? "hand_picked"}
+            edits={editsBucket(data.origin, data.editsSinceRandom)}
             onLinked={(id) => actions.set("cardId", id)} onShow={showCard}
-            before={
-              <button type="button" className="pm-button pm-icon-button" onClick={randomize}
+            tools={<>
+              <button type="button" className="pm-tool" onClick={randomize}
                 aria-label={t("action.randomize")} title={t("action.randomize")}>
                 <ShuffleIcon />
               </button>
-            }
-            after={
-              <button type="button" className="pm-button pm-icon-button" onClick={download} disabled={!portrait}
+              <button type="button" className="pm-tool" onClick={download} disabled={!portrait}
                 aria-label={t("action.download")} title={t("action.download")}>
                 <DownloadIcon />
               </button>
-            } />
+            </>}>
+            {frame}
+          </CardAction>
+        ) : frame}
+        {/* The selected piece's colors, right under the portrait and exactly as wide. */}
+        {canEdit && rows.length > 0 && (
+          <div className="pm-colors" style={{ width: WIDTH * scale }}>
+            {rows.map(({ group: g, label }) => (
+              <ColorRow key={g} label={label} value={shown.colors[g]} palette={PALETTES[g]}
+                onPick={(hex) => commitColor(g, hex)} onDrag={(hex) => dragColor(g, hex)}
+                onClosePicker={() => dropUncommitted(g)} />
+            ))}
+          </div>
         )}
       </div>
 
@@ -428,31 +495,22 @@ function PortraitMaker({ data, actions, handle, canEdit, worldId }: {
           <div className="pm-pieces">
             {layer.optional && (
               <PieceOption look={look} category={tab} partId={NONE} label={t("piece.none")}
-                selected={look.parts[tab] === NONE} onPick={() => setPart(tab, NONE)} />
+                selected={look.parts[tab] === NONE} onPick={() => pickPiece(tab, NONE)} />
             )}
             {partsIn(tab).map((p, i) => (
               <PieceOption key={p.id} look={look} category={tab} partId={p.id}
                 label={t("piece.option", { layer: t(`layer.${tab}`), n: i + 1 })}
-                selected={look.parts[tab] === p.id} onPick={() => setPart(tab, p.id)} />
+                selected={look.parts[tab] === p.id} onPick={() => pickPiece(tab, p.id)} />
             ))}
           </div>
 
           {layer.movable && (
-            <OffsetControl value={look.offsets[tab]} onChange={(dy) => setOffset(tab, dy)} />
-          )}
-
-          {selected && (
-            <div className="pm-colors">
-              {rows.length === 0 && <p className="pm-hint">{t("piece.noColors")}</p>}
-              {rows.map(({ group: g, label }) => (
-                <ColorRow key={g} label={label} value={shown.colors[g]} palette={PALETTES[g]}
-                  onPick={(hex) => commitColor(g, hex)} onDrag={(hex) => dragColor(g, hex)}
-                  onClosePicker={() => dropUncommitted(g)} />
-              ))}
-            </div>
+            <OffsetControl value={look.offsets[tab]} onChange={(dy) => nudge(tab, dy)} />
           )}
         </div>
       )}
+    </div>
+    </ToastProvider>
     </div>
   )
 }
@@ -462,12 +520,13 @@ function PortraitMaker({ data, actions, handle, canEdit, worldId }: {
 // dark mode; the warm accent comes from the host theme when it has one.
 
 const CSS = `
-.pm { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 28px; align-items: start;
-  width: 100%; height: 100%; min-height: 100%; overflow-y: auto; box-sizing: border-box;
-  padding: 28px clamp(16px, 3vw, 40px) 40px; color: inherit; font: inherit;
+.pm-shell { position: relative; width: 100%; height: 100%; min-height: 100%; color: inherit; font: inherit;
   /* With surface "plain" the world shows through; give ourselves the frosted backdrop. */
   background: color-mix(in srgb, var(--background, #16110b) 72%, transparent);
   backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px); }
+.pm { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 28px; align-items: start;
+  width: 100%; height: 100%; overflow-y: auto; box-sizing: border-box;
+  padding: 28px clamp(16px, 3vw, 40px) 40px; color: inherit; font: inherit; }
 .pm-narrow { grid-template-columns: minmax(0, 1fr); justify-items: center; }
 .pm-stage { display: grid; gap: 14px; justify-items: center; }
 
@@ -475,24 +534,33 @@ const CSS = `
 .pm-mat { line-height: 0; }
 .pm-pixels { display: block; image-rendering: pixelated; image-rendering: crisp-edges; }
 
-.pm-actions { display: flex; gap: 8px; align-items: center; justify-content: center; }
-.pm-actions .pm-button { height: 40px; box-sizing: border-box; }
-.pm-icon-button { width: 40px; padding: 0; display: inline-flex; align-items: center; justify-content: center; }
-.pm-icon-button svg { width: 18px !important; height: 18px !important; flex: none; }
-.pm-icon-button svg circle[fill="currentColor"] { fill: currentColor; }
-.pm-button { padding: 9px 18px; border-radius: 10px; border: 1px solid rgba(127,127,127,0.4); background: transparent;
-  color: inherit; font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; }
-.pm-button:hover { background: rgba(127,127,127,0.12); }
-.pm-button:disabled { opacity: 0.5; cursor: default; }
-.pm-primary { background: var(--pm-accent); border-color: transparent; color: #1a140e; }
-.pm-primary:hover { background: color-mix(in srgb, var(--pm-accent) 85%, white); }
 
-.pm-card-action { display: grid; gap: 6px; justify-items: center; }
-.pm-card-status { margin: 0; min-height: 20px; display: flex; flex-wrap: wrap; justify-content: center; gap: 10px;
-  align-items: center; font-size: 13px; opacity: 0.75; }
-.pm-card-error { color: #e07a6a; }
-.pm-link { padding: 0; border: 0; background: none; color: inherit; font: inherit; text-decoration: underline;
-  text-underline-offset: 2px; cursor: pointer; }
+.pm-card-action { display: grid; gap: 8px; justify-items: center; }
+
+/* The portrait's tool bar: floats over the bottom-right corner, shown on hover,
+   on keyboard focus, and while a card is being picked or saved. Always shown on
+   touch screens, where there is no hover. */
+.pm-frame-wrap { position: relative; line-height: 0; }
+.pm-toolbar { position: absolute; right: 10px; bottom: 10px; display: flex; gap: 2px; padding: 4px;
+  border-radius: 12px; background: rgba(18, 15, 12, 0.6); border: 1px solid rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); color: #f2ebe1; line-height: normal;
+  opacity: 0; transform: translateY(4px); pointer-events: none; transition: opacity 0.15s ease, transform 0.15s ease; }
+.pm-frame-wrap:hover .pm-toolbar, .pm-toolbar:focus-within, .pm-toolbar[data-active] {
+  opacity: 1; transform: none; pointer-events: auto; }
+@media (hover: none) { .pm-toolbar { opacity: 1; transform: none; pointer-events: auto; } }
+@media (prefers-reduced-motion: reduce) { .pm-toolbar { transition: none; } }
+.pm-tool { width: 34px; height: 34px; padding: 0; border: 0; border-radius: 8px; background: transparent; color: inherit;
+  display: inline-flex; align-items: center; justify-content: center; cursor: pointer; }
+.pm-tool:hover { background: rgba(255, 255, 255, 0.14); }
+.pm-tool:disabled { opacity: 0.45; cursor: default; background: transparent; }
+/* The main action: the theme's accent, set a little apart from the tools. */
+.pm-tool-primary { margin-left: 4px; background: var(--pm-accent); color: #1a140e; }
+.pm-tool-primary:hover { background: color-mix(in srgb, var(--pm-accent) 85%, white); }
+.pm-tool-primary:disabled { background: var(--pm-accent); }
+.pm-tool svg { width: 18px !important; height: 18px !important; flex: none; }
+.pm-tool circle { fill: none; }
+/* The card list opens upward from the bar, aligned to its right edge. */
+.pm-toolbar .pm-cards { top: auto; bottom: calc(100% + 10px); left: auto; right: -4px; transform: none; }
 .pm-cards { position: absolute; z-index: 40; top: calc(100% + 8px); left: 50%; transform: translateX(-50%); width: 280px;
   display: grid; gap: 8px; padding: 10px; border-radius: 12px; background: rgba(24, 20, 16, 0.97); color: #ece3d6;
   border: 1px solid rgba(255, 235, 205, 0.14); box-shadow: 0 14px 32px rgba(0, 0, 0, 0.5); }
@@ -539,16 +607,21 @@ const CSS = `
   font-size: 13.5px; font-variant-numeric: tabular-nums; text-align: center; cursor: pointer; }
 .pm-offset-step:focus-visible, .pm-offset-value:focus-visible { outline: 2px solid var(--pm-accent); outline-offset: 2px; }
 
-.pm-colors { display: grid; gap: 12px; padding-top: 4px; border-top: 1px solid rgba(127,127,127,0.2); }
-.pm-color-row { display: grid; gap: 6px; padding-top: 8px; }
+.pm-colors { display: grid; gap: 10px; max-width: 100%; box-sizing: border-box; }
+.pm-color-row { display: grid; gap: 6px; }
 .pm-label { font-size: 13.5px; opacity: 0.6; }
-.pm-hint { margin: 8px 0 0; font-size: 14px; opacity: 0.55; }
-.pm-swatches { display: flex; flex-wrap: wrap; gap: 8px; }
+/* One row of equal squares that shrink to the portrait's width (max 34px each). */
+.pm-swatches { display: grid; grid-template-columns: repeat(var(--pm-swatch-count, 9), minmax(0, 34px));
+  justify-content: space-between; gap: 6px; }
+.pm-swatches .pm-picker-anchor { display: block; }
+.pm-swatches .pm-swatch { width: 100%; height: auto; aspect-ratio: 1; }
+/* The last swatch opens the picker: align it to the row's right edge so it stays over the column. */
+.pm-swatches .pm-picker { left: auto; right: 0; }
 .pm-swatch { position: relative; width: 34px; height: 34px; padding: 0; border-radius: 8px; cursor: pointer;
   border: 1px solid rgba(0,0,0,0.35); box-shadow: inset 0 0 0 1px rgba(255,255,255,0.12); }
 .pm-swatch:hover { transform: translateY(-1px); }
-.pm-button:focus-visible, .pm-tab:focus-visible, .pm-piece:focus-visible, .pm-swatch:focus-visible,
-.pm-link:focus-visible, .pm-cards-item:focus-visible, .pm-cards-create:focus-visible {
+.pm-tool:focus-visible, .pm-tab:focus-visible, .pm-piece:focus-visible, .pm-swatch:focus-visible,
+.pm-cards-item:focus-visible, .pm-cards-create:focus-visible {
   outline: 2px solid var(--pm-accent); outline-offset: 2px; }
 .pm-swatch[aria-pressed="true"] { outline: 2px solid var(--pm-accent); outline-offset: 2px; }
 .pm-swatch-custom { background: conic-gradient(from 90deg, #c0504d, #d9a441, #4fa38a, #3a5fb8, #7d3fa0, #c0504d); }
@@ -564,7 +637,11 @@ const CSS = `
   border: 2px solid #fff; box-shadow: 0 0 0 1px rgba(0,0,0,0.5), 0 2px 4px rgba(0,0,0,0.4); pointer-events: none; }
 .pm-picker-footer { display: flex; align-items: center; gap: 8px; font-size: 13.5px; }
 .pm-picker-chip { width: 22px; height: 22px; border-radius: 5px; border: 1px solid rgba(255,255,255,0.2); }
-.pm-picker-footer code { font-family: ui-monospace, monospace; opacity: 0.8; }
+.pm-picker-hex { flex: 1; min-width: 0; box-sizing: border-box; padding: 5px 8px; border-radius: 7px;
+  border: 1px solid rgba(127,127,127,0.3); background: rgba(127,127,127,0.08); color: inherit;
+  font-family: ui-monospace, monospace; font-size: 13.5px; outline: none; }
+.pm-picker-hex:focus { border-color: var(--pm-accent); }
+.pm-picker-hex[aria-invalid="true"] { border-color: #c0504d; }
 `
 
 // ── Wiring into vvd ──────────────────────────────────────────────────────────

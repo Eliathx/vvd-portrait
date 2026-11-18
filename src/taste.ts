@@ -10,7 +10,8 @@
 //             rarePieces("ears", ["ears-elf"], 0.1)    elf ears ~1 portrait in 10
 //
 //   CHECKS  things a finished roll must satisfy. When one fails, Randomize
-//           re-rolls the color the rule names as `change` (never the other).
+//           re-rolls the color the rule names as `change`; only if no swatch of
+//           it works does it try the other side.
 //             apart("hair", "skin", DISTINCT)          hair never melts into the face
 //
 // Adding a new CHECK kind: add its type to Check, a constructor, and an entry in
@@ -68,6 +69,10 @@ export const TASTE: Rule[] = [
   apart("outfit2", "outfit", DISTINCT), // trim / tie stands apart from the main cloth
   apart("accent", "outfit2", DISTINCT), // a pin on a tie must show
   apart("accent", "outfit", DISTINCT),
+  // The figure stands out from the background (Randomize changes the background, not the person).
+  apart("background", "skin", DISTINCT),
+  apart("background", "hair", DISTINCT),
+  apart("background", "outfit", DISTINCT),
   // body-suit: the tie sits on a light shirt drawn in fixed colors.
   apart("outfit2", "#edd8cf", CONTRAST, { piece: "body-suit" }),
   apart("outfit2", "#b6aba7", CONTRAST, { piece: "body-suit" }),
@@ -164,12 +169,19 @@ export function withTaste(look: Look, rules: Rule[] = TASTE): Look {
   for (let pass = 0; pass < 8; pass++) {
     const broken = active.find((r) => margin(r, colors) < 0)
     if (!broken) break
-    const group = broken.change
-    const touching = active.filter((r) => reads(r).includes(group))
-    const score = (hex: string) => Math.min(...touching.map((r) => margin(r, { ...colors, [group]: hex })))
-    const options = colorOrder(group, rules)
-    colors[group] = options.find((hex) => score(hex) >= 0) ??
-      options.reduce((best, hex) => (score(hex) > score(best) ? hex : best))
+    // Re-roll `change`; if no swatch of it works (dark hair vs an all-dark
+    // background palette), try the rule's other group before settling.
+    const candidates = [broken.change, ...(isGroup(broken.from) ? [broken.from] : [])]
+    const tries = candidates.map((group) => {
+      const touching = active.filter((r) => reads(r).includes(group))
+      const score = (hex: string) => Math.min(...touching.map((r) => margin(r, { ...colors, [group]: hex })))
+      const options = colorOrder(group, rules)
+      const good = options.find((hex) => score(hex) >= 0)
+      return { group, good, closest: options.reduce((best, hex) => (score(hex) > score(best) ? hex : best)) }
+    })
+    const fix = tries.find((t) => t.good)
+    if (fix) colors[fix.group] = fix.good!
+    else colors[tries[0].group] = tries[0].closest
   }
   return { ...look, colors }
 }

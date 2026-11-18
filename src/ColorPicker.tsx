@@ -38,6 +38,66 @@ function startDrag(
   move(e.nativeEvent) // a plain click also picks
 }
 
+/** "#abc", "abc", "#aabbcc" or "aabbcc" → "#aabbcc"; anything else → null. */
+export function parseHex(text: string): string | null {
+  const s = text.trim().replace(/^#/, "").toLowerCase()
+  if (/^[0-9a-f]{6}$/.test(s)) return "#" + s
+  if (/^[0-9a-f]{3}$/.test(s)) return "#" + [...s].map((c) => c + c).join("")
+  return null
+}
+
+/**
+ * The hex field: type a color, see it live as soon as it's valid, and it's
+ * saved on Enter or when you leave the field. An unfinished or invalid entry
+ * goes back to the current color on leave. While you're not typing in it, it
+ * follows the square and the strip.
+ */
+function HexInput({ value, label, onType, onDone }: {
+  value: string
+  label: string
+  onType: (hex: string) => void
+  onDone: (hex: string) => void
+}) {
+  const [text, setText] = useState(value)
+  const [editing, setEditing] = useState(false)
+  useEffect(() => { if (!editing) setText(value) }, [value, editing])
+
+  // A click outside closes the picker before the field ever blurs, so keep a
+  // valid entry that's still being typed when we unmount.
+  const pending = useRef<{ editing: boolean; text: string; onDone: typeof onDone }>({ editing, text, onDone })
+  pending.current = { editing, text, onDone }
+  useEffect(() => () => {
+    const { editing, text, onDone } = pending.current
+    const hex = editing ? parseHex(text) : null
+    if (hex) onDone(hex)
+  }, [])
+
+  const finish = () => {
+    setEditing(false)
+    const hex = parseHex(text)
+    if (hex) onDone(hex)
+    else setText(value)
+  }
+  return (
+    <input
+      className="pm-picker-hex"
+      value={text}
+      aria-label={label}
+      spellCheck={false}
+      maxLength={7}
+      aria-invalid={editing && !parseHex(text)}
+      onFocus={(e) => { setEditing(true); e.currentTarget.select() }}
+      onChange={(e) => {
+        setText(e.target.value)
+        const hex = parseHex(e.target.value)
+        if (hex) onType(hex)
+      }}
+      onBlur={finish}
+      onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur() }}
+    />
+  )
+}
+
 export function ColorPicker({ value, onDrag, onCommit, onClose }: Props) {
   // We keep HSV in local state (not just the hex) so the hue survives when the
   // color goes fully grey or black — otherwise the strip would jump to red.
@@ -87,7 +147,16 @@ export function ColorPicker({ value, onDrag, onCommit, onClose }: Props) {
       </div>
       <div className="pm-picker-footer">
         <span className="pm-picker-chip" style={{ background: hex }} />
-        <code>{hex}</code>
+        <HexInput
+          value={hex}
+          label={t("color.hex")}
+          onType={(typed) => update(hexToHsv(typed))}
+          onDone={(typed) => {
+            latest.current = hexToHsv(typed)
+            setHsv(latest.current)
+            onCommit(typed)
+          }}
+        />
       </div>
     </div>
   )

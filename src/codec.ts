@@ -24,6 +24,14 @@ export const codec = defineStateCodec({
    * name. Set by "Add to card"; the name is always read live from the world.
    */
   cardId: field.value<string | null>(null),
+  /**
+   * How this portrait came to be, for analytics: "random" = straight from
+   * Randomize, "random_edited" = randomized then tweaked by hand. Missing
+   * (null) = never randomized, i.e. hand-picked.
+   */
+  origin: field.value<"random" | "random_edited" | null>(null),
+  /** Hand edits since the last Randomize (pieces, colors, nudges). Analytics only. */
+  editsSinceRandom: field.value<number>(0),
 })
 
 export default codec

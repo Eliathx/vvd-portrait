@@ -1,6 +1,7 @@
 {
   "id": "portrait-maker",
   "name": "Portrait Maker",
+  "description": "Build a pixel-art character portrait from pieces and colors, or roll a random one, then add it to a card in one click.",
   "kind": "tool",
   "version": "0.1.0",
   "icon": "palette",
@@ -17,5 +18,29 @@
     "writesWorld": true,
     "sharing": false
   },
-  "entryModule": "@/tool"
+  "entryModule": "@/tool",
+  "analytics": {
+    "actions": [
+      {
+        "name": "portrait_added_to_card",
+        "label": "Portraits added to cards",
+        "description": "A portrait was saved to a card, counted only once it succeeded. Result: assigned = set as the card image; uploaded = saved to world images only; downloaded = the host had no uploads, so the PNG was handed over.",
+        "props": [
+          { "name": "result", "type": "string", "label": "Result" },
+          { "name": "relink", "type": "string", "label": "Same card or a new one" },
+          { "name": "origin", "type": "string", "label": "Made by (random, random_edited, hand_picked)" },
+          { "name": "edits", "type": "string", "label": "Hand edits after Randomize (0, 1-5, 6+, n/a)" }
+        ]
+      },
+      {
+        "name": "piece_picked",
+        "label": "Pieces picked",
+        "description": "Someone chose a piece from the gallery (Randomize doesn't count).",
+        "props": [
+          { "name": "layer", "type": "string", "label": "Layer" },
+          { "name": "piece", "type": "string", "label": "Piece" }
+        ]
+      }
+    ]
+  }
 }
