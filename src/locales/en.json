@@ -1,0 +1,49 @@
+{
+  "layer": {
+    "background": "Background",
+    "body": "Clothes",
+    "face": "Face",
+    "eyes": "Eyes",
+    "eyebrows": "Brows",
+    "nose": "Nose",
+    "mouth": "Mouth",
+    "hair": "Hair",
+    "accessory": "Accessory"
+  },
+  "group": {
+    "background": "Background",
+    "skin": "Skin",
+    "hair": "Hair",
+    "eyes": "Eyes",
+    "outfit": "Clothes",
+    "outfit2": "Trim",
+    "accent": "Accent"
+  },
+  "action": {
+    "randomize": "Randomize",
+    "download": "Download PNG",
+    "addToCard": "Add to card"
+  },
+  "piece": {
+    "none": "None",
+    "noColors": "This piece has fixed colors."
+  },
+  "color": {
+    "custom": "Custom color"
+  },
+  "card": {
+    "pickTitle": "Choose a card",
+    "search": "Search cards…",
+    "none": "This world has no cards yet. Type a name to create one.",
+    "noMatch": "No card matches.",
+    "untitled": "Untitled",
+    "current": "current",
+    "create": "Create “{name}” as a card",
+    "saving": "Adding to {name}…",
+    "done": "Added to {name}.",
+    "error": "Couldn't add it to the card. Try again.",
+    "downloaded": "Saved {name}.png. Drop it on the card.",
+    "uploaded": "Saved to this world’s images. Pick it on the card.",
+    "show": "Open card"
+  }
+}

@@ -1,0 +1,5 @@
+.vvd/*
+!.vvd/ship.json
+.vvd-build/
+node_modules/
+.claude/
