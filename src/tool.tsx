@@ -6,6 +6,7 @@ import { type AddResult, type Documents, addPortraitToCard } from "@/cardImage"
 import { CardPicker, useCards } from "@/CardPicker"
 import { codec } from "@/codec"
 import { ColorPicker } from "@/ColorPicker"
+import { Facepile, PRESENCE_CSS } from "@/Presence"
 import { hexToRgb } from "@/color"
 import { useT } from "@/i18n"
 import { randomLook, resolveLook } from "@/look"
@@ -204,7 +205,13 @@ function CardAction({ portrait, cardId, worldId, onLinked, onShow }: {
   )
 }
 
-function PortraitMaker({ data, actions, canEdit, worldId }: { data: Data; actions: Actions; canEdit: boolean; worldId: string }) {
+function PortraitMaker({ data, actions, handle, canEdit, worldId }: {
+  data: Data
+  actions: Actions
+  handle: Parameters<typeof Facepile>[0]["handle"]
+  canEdit: boolean
+  worldId: string
+}) {
   const t = useT()
   const accent = useAccent()
   const look = useMemo(() => resolveLook(data.parts, data.colors), [data.parts, data.colors])
@@ -266,9 +273,10 @@ function PortraitMaker({ data, actions, canEdit, worldId }: { data: Data; action
 
   return (
     <div ref={rootRef} className={"pm" + (narrow ? " pm-narrow" : "")} style={{ "--pm-accent": accent } as CSSProperties}>
-      <style>{CSS}</style>
+      <style>{CSS + PRESENCE_CSS}</style>
 
       <div className="pm-stage">
+        <Facepile handle={handle} />
         <div className="pm-frame">
           <div className="pm-mat"><PixelCanvas image={portrait} scale={scale} /></div>
         </div>
@@ -411,10 +419,10 @@ export function PortraitView({ document, context }: ToolRenderProps) {
   const coords = useMemo(() => ({ worldId: document.worldId, documentId: document.id }), [document.worldId, document.id])
   // useDocument opens the shared document: `data` is the live saved state,
   // `actions` writes to it (persisted + synced for everyone, automatically).
-  const { data, status, actions, retry } = useDocument(coords, codec)
+  const { data, status, actions, handle, retry } = useDocument(coords, codec)
   return (
     <DocumentGate status={status} onRetry={retry}>
-      {data && actions && <PortraitMaker data={data} actions={actions} canEdit={context.canEdit} worldId={document.worldId} />}
+      {data && actions && <PortraitMaker data={data} actions={actions} handle={handle} canEdit={context.canEdit} worldId={document.worldId} />}
     </DocumentGate>
   )
 }

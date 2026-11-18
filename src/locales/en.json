@@ -45,5 +45,8 @@
     "downloaded": "Saved {name}.png. Drop it on the card.",
     "uploaded": "Saved to this world’s images. Pick it on the card.",
     "show": "Open card"
+  },
+  "presence": {
+    "label": "Also here: {names}"
   }
 }
