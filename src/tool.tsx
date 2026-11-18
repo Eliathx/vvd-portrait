@@ -91,18 +91,20 @@ function PieceOption({ look, category, partId, label, selected, onPick }: {
   )
 }
 
-function ColorRow({ label, value, palette, onPick, onDrag }: {
+function ColorRow({ label, value, palette, onPick, onDrag, onClosePicker }: {
   label: string
   value: string
   palette: string[]
   onPick: (hex: string) => void
   /** Fires continuously while the free picker is being dragged. */
   onDrag: (hex: string) => void
+  /** The free picker closed (a drag cut short by Escape never commits). */
+  onClosePicker: () => void
 }) {
   const t = useT()
   const custom = !palette.includes(value)
   const [open, setOpen] = useState(false)
-  const close = useCallback(() => setOpen(false), [])
+  const close = useCallback(() => { setOpen(false); onClosePicker() }, [onClosePicker])
   return (
     <div className="pm-color-row">
       <span className="pm-label">{label}</span>
@@ -220,10 +222,18 @@ function PortraitMaker({ data, actions, handle, canEdit, worldId }: {
   // Writing each one to the shared document (and redrawing every thumbnail) is
   // what made it feel slow. So: the drag only updates a LOCAL draft that the big
   // preview shows, and the document gets the color once, when the picker closes.
-  const [draft, setDraft] = useState<{ group: ColorGroup; hex: string } | null>(null)
-  // Drop the draft once the saved document has caught up with it (no flicker back).
+  // `from` is set on commit: the document's color at that moment.
+  const [draft, setDraft] = useState<{ group: ColorGroup; hex: string; from?: string } | null>(null)
+  // After a commit, hand the color back to the document as soon as it moves: it
+  // either caught up with us (no flicker back) or someone else changed it right
+  // after (theirs wins — never keep showing a color the document doesn't have).
+  // The timer is the safety net if no change ever arrives.
   useEffect(() => {
-    if (draft && look.colors[draft.group] === draft.hex) setDraft(null)
+    if (!draft || draft.from === undefined) return
+    const now = look.colors[draft.group]
+    if (now === draft.hex || now !== draft.from) { setDraft(null); return }
+    const timer = setTimeout(() => setDraft(null), 1500)
+    return () => clearTimeout(timer)
   }, [look, draft])
   const shown = useMemo(
     () => (draft ? { ...look, colors: { ...look.colors, [draft.group]: draft.hex } } : look),
@@ -250,6 +260,14 @@ function PortraitMaker({ data, actions, handle, canEdit, worldId }: {
   const setPart = (category: Category, id: string) => actions.map("parts").set(category, id)
   const setColor = (group: ColorGroup, hex: string) => actions.map("colors").set(group, hex)
   const dragColor = (group: ColorGroup, hex: string) => setDraft({ group, hex })
+  const dropUncommitted = useCallback(
+    (group: ColorGroup) => setDraft((d) => (d && d.group === group && d.from === undefined ? null : d)),
+    [],
+  )
+  const commitColor = (group: ColorGroup, hex: string) => {
+    setColor(group, hex)
+    setDraft((d) => (d && d.group === group ? { group, hex, from: look.colors[group] } : d))
+  }
   const randomize = () => {
     const next = randomLook(look)
     actions.transact(() => { // one undo step, one sync message
@@ -318,7 +336,8 @@ function PortraitMaker({ data, actions, handle, canEdit, worldId }: {
               {groups.length === 0 && <p className="pm-hint">{t("piece.noColors")}</p>}
               {groups.map((g) => (
                 <ColorRow key={g} label={t(`group.${g}`)} value={shown.colors[g]} palette={PALETTES[g]}
-                  onPick={(hex) => setColor(g, hex)} onDrag={(hex) => dragColor(g, hex)} />
+                  onPick={(hex) => commitColor(g, hex)} onDrag={(hex) => dragColor(g, hex)}
+                  onClosePicker={() => dropUncommitted(g)} />
               ))}
             </div>
           )}
