@@ -1,7 +1,7 @@
 // Between the stored document and a drawable portrait: fill in defaults, and roll
 // random portraits.
 
-import { COLOR_GROUPS, LAYERS, NONE, type Category, type ColorGroup, type Look } from "@/model"
+import { COLOR_GROUPS, LAYERS, NONE, OFFSET_RANGE, type Category, type ColorGroup, type Look } from "@/model"
 import { DEFAULT_COLORS, PALETTES } from "@/palettes"
 import { findPart, partsIn } from "@/parts/manifest"
 
@@ -12,43 +12,57 @@ const isHex = (v: unknown): v is string => typeof v === "string" && /^#[0-9a-f]{
  * that was removed from the manifest, a malformed color) falls back to the default,
  * so old documents always open.
  */
+/** A stored nudge → a whole number within range; 0 for layers that can't move. */
+export function clampOffset(layer: (typeof LAYERS)[number], value: unknown): number {
+  if (!layer.movable || typeof value !== "number" || !Number.isFinite(value)) return 0
+  return Math.max(-OFFSET_RANGE, Math.min(OFFSET_RANGE, Math.round(value)))
+}
+
 export function resolveLook(
   storedParts: Readonly<Record<string, string>>,
   storedColors: Readonly<Record<string, string>>,
+  storedOffsets: Readonly<Record<string, number>> = {},
 ): Look {
   const parts = {} as Record<Category, string>
   for (const layer of LAYERS) {
     const id = storedParts[layer.id]
     const valid = (id === NONE && layer.optional) || (id !== undefined && findPart(id)?.category === layer.id)
-    parts[layer.id] = valid ? id : (partsIn(layer.id)[0]?.id ?? NONE)
+    const fallback = layer.startsEmpty ? NONE : (partsIn(layer.id)[0]?.id ?? NONE)
+    parts[layer.id] = valid ? id : fallback
   }
   const colors = {} as Record<ColorGroup, string>
   for (const group of COLOR_GROUPS) {
     const hex = storedColors[group]
     colors[group] = isHex(hex) ? hex.toLowerCase() : DEFAULT_COLORS[group]
   }
-  return { parts, colors }
+  const offsets = {} as Record<Category, number>
+  for (const layer of LAYERS) offsets[layer.id] = clampOffset(layer, storedOffsets[layer.id])
+  return { parts, colors, offsets }
 }
 
 const pick = <T,>(items: T[]): T => items[Math.floor(Math.random() * items.length)]
 
-/** Chance that an optional layer (back hair, front hair, accessory) comes out empty. */
+/** Default chance that an optional layer comes out empty (see `emptyChance` in LAYERS). */
 const EMPTY_CHANCE = 0.3
 
 function rollLook(): Look {
   const parts = {} as Record<Category, string>
   for (const layer of LAYERS) {
     const ids = partsIn(layer.id).map((p) => p.id)
-    const empty = layer.optional && (ids.length === 0 || Math.random() < EMPTY_CHANCE)
+    const empty = layer.optional && (ids.length === 0 || Math.random() < (layer.emptyChance ?? EMPTY_CHANCE))
     parts[layer.id] = empty ? NONE : (pick(ids) ?? NONE)
   }
   const colors = {} as Record<ColorGroup, string>
   for (const group of COLOR_GROUPS) colors[group] = pick(PALETTES[group])
-  return { parts, colors }
+  // Features land where the template puts them; only the brows get a little
+  // play (±1px), which is enough to change the expression.
+  const offsets = {} as Record<Category, number>
+  for (const layer of LAYERS) offsets[layer.id] = layer.id === "eyebrows" ? pick([-1, 0, 0, 1]) : 0
+  return { parts, colors, offsets }
 }
 
 export function sameLook(a: Look, b: Look): boolean {
-  return LAYERS.every((l) => a.parts[l.id] === b.parts[l.id]) &&
+  return LAYERS.every((l) => a.parts[l.id] === b.parts[l.id] && a.offsets[l.id] === b.offsets[l.id]) &&
     COLOR_GROUPS.every((g) => a.colors[g] === b.colors[g])
 }
 

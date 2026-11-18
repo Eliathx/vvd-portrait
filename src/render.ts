@@ -7,9 +7,10 @@
 // Everything works on 96×128 ImageData; scaling up happens only on screen (CSS
 // `image-rendering: pixelated`) or on export, so pixels always stay crisp.
 
-import { makeRamp, type RGB } from "@/color"
+import { hexToRgb, makeRamp, shadeLike, type ArtRamp, type RGB } from "@/color"
 import { MARKERS } from "@/markers"
 import { HEIGHT, LAYERS, NONE, WIDTH, type Look, type Part } from "@/model"
+import { ART_RAMPS } from "@/palettes"
 import { findPart } from "@/parts/manifest"
 
 function makeCanvas(width = WIDTH, height = HEIGHT): HTMLCanvasElement {
@@ -64,20 +65,35 @@ const TOLERANCE = 6
  * then walk the pixels once. A pixel that isn't (almost exactly) a marker is
  * copied as is.
  */
-export function recolor(source: ImageData, zoneColors: string[]): ImageData {
+export function recolor(
+  source: ImageData,
+  zoneColors: { hex: string; art?: ArtRamp }[],
+  regions: { hex: string; tones: string[] }[] = [],
+): ImageData {
   const swaps: { marker: RGB; color: RGB }[] = []
-  zoneColors.forEach((hex, zone) => {
-    const ramp = makeRamp(hex) // [light, mid, dark]
+  zoneColors.forEach(({ hex, art }, zone) => {
+    const ramp = makeRamp(hex, art) // [light, mid, dark, darkest, highlight]
     MARKERS[zone]?.forEach((marker, tone) => swaps.push({ marker, color: ramp[tone] }))
   })
+  // A region's own tones work just like markers: each drawn tone → its shade of the pick.
+  for (const { hex, tones } of regions) {
+    const shades = shadeLike(hex, tones)
+    tones.forEach((tone, i) => swaps.push({ marker: hexToRgb(tone), color: shades[i] }))
+  }
 
   const out = new ImageData(new Uint8ClampedArray(source.data), source.width, source.height)
   const px = out.data // flat array: r, g, b, a, r, g, b, a, …
   for (let i = 0; i < px.length; i += 4) {
     if (px[i + 3] === 0) continue // fully transparent: nothing to do
-    const next = swaps.find(({ marker: [r, g, b] }) =>
-      Math.abs(px[i] - r) <= TOLERANCE && Math.abs(px[i + 1] - g) <= TOLERANCE && Math.abs(px[i + 2] - b) <= TOLERANCE,
-    )?.color
+    // The CLOSEST swap within tolerance: region tones are real colors, and two of
+    // them may sit a few steps apart.
+    let next: RGB | undefined
+    let best = Infinity
+    for (const { marker: [r, g, b], color } of swaps) {
+      const dr = Math.abs(px[i] - r), dg = Math.abs(px[i + 1] - g), db = Math.abs(px[i + 2] - b)
+      if (dr > TOLERANCE || dg > TOLERANCE || db > TOLERANCE) continue
+      if (dr + dg + db < best) { best = dr + dg + db; next = color }
+    }
     if (next) {
       px[i] = next[0]
       px[i + 1] = next[1]
@@ -90,7 +106,11 @@ export function recolor(source: ImageData, zoneColors: string[]): ImageData {
 /** One image of a piece (its front `src` or its `back`), tinted with the piece's color groups. */
 export async function renderImage(src: string, part: Part, look: Look): Promise<ImageData> {
   const pixels = await loadPixels(src)
-  return recolor(pixels, part.zones.map((group) => look.colors[group]))
+  return recolor(
+    pixels,
+    part.zones.map((group) => ({ hex: look.colors[group], art: ART_RAMPS[group] })),
+    (part.regions ?? []).map((r) => ({ hex: look.colors[r.group], tones: r.tones })),
+  )
 }
 
 // ── 3. Composing ─────────────────────────────────────────────────────────────
@@ -103,7 +123,7 @@ export async function renderImage(src: string, part: Part, look: Look): Promise<
 // `willReadFrequently` keeps them in CPU memory, so getImageData stays fast.
 let composeCanvases: { ctx: CanvasRenderingContext2D; scratch: HTMLCanvasElement; sctx: CanvasRenderingContext2D } | null = null
 
-export function compose(layers: ImageData[]): ImageData {
+export function compose(layers: { image: ImageData; dy: number }[]): ImageData {
   if (!composeCanvases) {
     const scratch = makeCanvas()
     composeCanvases = {
@@ -114,9 +134,9 @@ export function compose(layers: ImageData[]): ImageData {
   }
   const { ctx, scratch, sctx } = composeCanvases
   ctx.clearRect(0, 0, WIDTH, HEIGHT)
-  for (const layer of layers) {
-    sctx.putImageData(layer, 0, 0)
-    ctx.drawImage(scratch, 0, 0)
+  for (const { image, dy } of layers) {
+    sctx.putImageData(image, 0, 0)
+    ctx.drawImage(scratch, 0, dy) // dy: the layer's vertical nudge, whole pixels
   }
   return ctx.getImageData(0, 0, WIDTH, HEIGHT)
 }
@@ -128,10 +148,13 @@ export async function renderLook(look: Look): Promise<ImageData> {
     .filter((id) => id !== NONE)
     .map((id) => findPart(id))
     .filter((p): p is Part => !!p)
-  // Back images (a hairstyle's back) go right above the background, behind the rest.
+  // Back images go right above the background, behind the rest, MIRRORED: the
+  // outermost piece's back furthest back (a hood's back behind the hair's back).
   const bg = parts[0]?.category === "background" ? 1 : 0
-  const backs = parts.filter((p) => p.back).map((p) => renderImage(p.back!, p, look))
-  const fronts = parts.map((p) => renderImage(p.src, p, look))
+  const nudged = async (src: string, p: Part) =>
+    ({ image: await renderImage(src, p, look), dy: look.offsets[p.category] ?? 0 })
+  const backs = parts.filter((p) => p.back).reverse().map((p) => nudged(p.back!, p))
+  const fronts = parts.map((p) => nudged(p.src, p))
   const layers = await Promise.all([...fronts.slice(0, bg), ...backs, ...fronts.slice(bg)])
   return compose(layers)
 }

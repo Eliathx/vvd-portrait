@@ -5,7 +5,7 @@ import { defineStateCodec, field } from "@vvd/sdk"
 // the document is reopened. We never write save/load code ourselves.
 //
 // Stored shape, e.g.:
-//   parts:  { face: "face-round", hair: "hair-long-bangs", accessory: "" }
+//   parts:  { head: "head-human", hair: "hair-long", accessory: "" }
 //   colors: { skin: "#e8b48f", hair: "#8a5a33" }
 //
 // Both are per-KEY maps: if one person changes the hair while another changes
@@ -17,6 +17,8 @@ export const codec = defineStateCodec({
   parts: field.map<string>(),
   /** color group → "#rrggbb" */
   colors: field.map<string>(),
+  /** layer → vertical nudge in pixels (only "movable" layers, ±OFFSET_RANGE; missing = 0) */
+  offsets: field.map<number>(),
   /**
    * The Card this portrait belongs to — a reference (its id), never a copy of its
    * name. Set by "Add to card"; the name is always read live from the world.

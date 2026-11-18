@@ -1,4 +1,4 @@
-import { type CSSProperties, type RefObject, useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { type CSSProperties, type ReactNode, type RefObject, useCallback, useEffect, useMemo, useRef, useState } from "react"
 
 import { DocumentGate, type ToolRenderProps, defineTool, peekOrOpenDocument, useDocument, useHost, useHostCapability, useHostTheme } from "@vvd/sdk"
 
@@ -10,10 +10,13 @@ import { Facepile, PRESENCE_CSS } from "@/Presence"
 import { hexToRgb } from "@/color"
 import { useT } from "@/i18n"
 import { randomLook, resolveLook } from "@/look"
-import { COLOR_GROUPS, HEIGHT, LAYERS, NONE, WIDTH, type Category, type ColorGroup, type Look } from "@/model"
+import { COLOR_GROUPS, HEIGHT, LAYERS, NONE, OFFSET_RANGE, WIDTH, type Category, type ColorGroup, type Look } from "@/model"
 import { PALETTES } from "@/palettes"
 import { findPart, partsIn } from "@/parts/manifest"
 import { renderLook, toPngBlob } from "@/render"
+
+/** Layers that have art. A layer with no pieces yet (say, hats) gets no tab; it appears once a piece is added. */
+const SHOWN_LAYERS = LAYERS.filter((l) => partsIn(l.id).length > 0)
 
 // ── Small hooks ──────────────────────────────────────────────────────────────
 
@@ -60,6 +63,50 @@ function useAccent(): string {
   return saturation > 0.3 ? value : WARM_GOLD
 }
 
+// ── Icons ────────────────────────────────────────────────────────────────────
+// Simple line icons that take the text color (currentColor), so they follow the theme.
+
+// The host's own CSS styles bare <svg>s, so size and stroke are pinned inline too.
+const iconProps = {
+  width: 18, height: 18, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor",
+  strokeWidth: 2, strokeLinecap: "round", strokeLinejoin: "round", "aria-hidden": true,
+  style: {
+    width: 18, height: 18, minWidth: 18, minHeight: 18, flex: "none", display: "block",
+    fill: "none", stroke: "currentColor", strokeWidth: 2, overflow: "visible",
+  },
+} as const
+
+function ShuffleIcon() {
+  return (
+    <svg {...iconProps}>
+      <path d="M16 3h5v5" />
+      <path d="M4 20 21 3" />
+      <path d="M21 16v5h-5" />
+      <path d="m15 15 6 6" />
+      <path d="M4 4l5 5" />
+    </svg>
+  )
+}
+
+function NoneIcon() {
+  return (
+    <svg {...iconProps}>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M5.6 5.6 18.4 18.4" />
+    </svg>
+  )
+}
+
+function DownloadIcon() {
+  return (
+    <svg {...iconProps}>
+      <path d="M12 4v11" />
+      <path d="m7 10 5 5 5-5" />
+      <path d="M5 20h14" />
+    </svg>
+  )
+}
+
 // ── Pixel canvas ─────────────────────────────────────────────────────────────
 
 /** Shows the 96×128 pixels at a WHOLE-number scale, with no smoothing. */
@@ -84,6 +131,15 @@ function PieceOption({ look, category, partId, label, selected, onPick }: {
 }) {
   const preview = useMemo(() => ({ ...look, parts: { ...look.parts, [category]: partId } }), [look, category, partId])
   const image = usePortrait(preview)
+  // "None" gets its own tile: a portrait minus one piece is too easy to miss.
+  if (partId === NONE) {
+    return (
+      <button type="button" className="pm-piece pm-piece-none" aria-pressed={selected} aria-label={label} title={label} onClick={onPick}>
+        <NoneIcon />
+        <span>{label}</span>
+      </button>
+    )
+  }
   return (
     <button type="button" className="pm-piece" aria-pressed={selected} aria-label={label} title={label} onClick={onPick}>
       <PixelCanvas image={image} scale={1} />
@@ -126,11 +182,35 @@ function ColorRow({ label, value, palette, onPick, onDrag, onClosePicker }: {
   )
 }
 
+/** Nudge the current layer up/down a few pixels. Double-click the value to reset. */
+function OffsetControl({ value, onChange }: { value: number; onChange: (dy: number) => void }) {
+  const t = useT()
+  return (
+    <div className="pm-offset" role="group" aria-label={t("offset.label")}>
+      <span className="pm-label">{t("offset.label")}</span>
+      <button type="button" className="pm-offset-step" aria-label={t("offset.up")}
+        disabled={value <= -OFFSET_RANGE} onClick={() => onChange(value - 1)}>▲</button>
+      <button type="button" className="pm-offset-value" title={t("offset.reset")} aria-label={t("offset.value", { n: value })}
+        onDoubleClick={() => onChange(0)} onClick={(e) => e.detail === 0 && onChange(0)}>
+        {value > 0 ? `+${value}` : value}
+      </button>
+      <button type="button" className="pm-offset-step" aria-label={t("offset.down")}
+        disabled={value >= OFFSET_RANGE} onClick={() => onChange(value + 1)}>▼</button>
+    </div>
+  )
+}
+
 // ── The maker ────────────────────────────────────────────────────────────────
 
-type Data = { parts: Readonly<Record<string, string>>; colors: Readonly<Record<string, string>>; cardId: string | null }
+type Data = {
+  parts: Readonly<Record<string, string>>
+  colors: Readonly<Record<string, string>>
+  offsets: Readonly<Record<string, number>>
+  cardId: string | null
+}
 type Actions = {
   map(name: "parts" | "colors"): { set(key: string, value: string): void }
+  map(name: "offsets"): { set(key: string, value: number): void }
   set(name: "cardId", value: string | null): void
   transact(fn: () => void): void
 }
@@ -144,8 +224,11 @@ type CardStatus = "idle" | "saving" | AddResult | "error"
  * picking puts the portrait on that Card. The last Card is remembered by id
  * (never its name) so the picker can mark it.
  */
-function CardAction({ portrait, cardId, worldId, onLinked, onShow }: {
+function CardAction({ portrait, cardId, worldId, onLinked, onShow, before, after }: {
   portrait: ImageData | null
+  /** Buttons that sit in the same row, left and right of "Add to card". */
+  before?: ReactNode
+  after?: ReactNode
   cardId: string | null
   worldId: string
   onLinked: (cardId: string) => void
@@ -188,13 +271,17 @@ function CardAction({ portrait, cardId, worldId, onLinked, onShow }: {
 
   return (
     <div className="pm-card-action">
-      <span className="pm-picker-anchor">
-        <button type="button" className="pm-button pm-primary" disabled={!portrait || status === "saving"}
-          aria-expanded={open} aria-haspopup="dialog" onClick={() => setOpen((o) => !o)}>
-          {t("action.addToCard")}
-        </button>
-        {open && <CardPicker cards={cards} current={cardId} onPick={(id) => void send(id)} onClose={close} />}
-      </span>
+      <div className="pm-actions">
+        {before}
+        <span className="pm-picker-anchor">
+          <button type="button" className="pm-button pm-primary" disabled={!portrait || status === "saving"}
+            aria-expanded={open} aria-haspopup="dialog" onClick={() => setOpen((o) => !o)}>
+            {t("action.addToCard")}
+          </button>
+          {open && <CardPicker cards={cards} current={cardId} onPick={(id) => void send(id)} onClose={close} />}
+        </span>
+        {after}
+      </div>
       <p className="pm-card-status" role="status">
         {status === "saving" && t("card.saving", { name })}
         {status === "error" && <span className="pm-card-error">{t("card.error")}</span>}
@@ -218,7 +305,10 @@ function PortraitMaker({ data, actions, handle, canEdit, worldId }: {
 }) {
   const t = useT()
   const accent = useAccent()
-  const look = useMemo(() => resolveLook(data.parts, data.colors), [data.parts, data.colors])
+  const look = useMemo(
+    () => resolveLook(data.parts, data.colors, data.offsets ?? {}),
+    [data.parts, data.colors, data.offsets],
+  )
 
   // While the free color picker is dragged it fires dozens of changes a second.
   // Writing each one to the shared document (and redrawing every thumbnail) is
@@ -242,7 +332,7 @@ function PortraitMaker({ data, actions, handle, canEdit, worldId }: {
     [look, draft],
   )
   const portrait = usePortrait(shown)
-  const [tab, setTab] = useState<Category>("face")
+  const [tab, setTab] = useState<Category>("head")
   const nav = useHostCapability("nav")
   const refs = useHostCapability("refs")
   // Open the Card beside the portrait. In the workspace this adds a panel next to
@@ -261,6 +351,7 @@ function PortraitMaker({ data, actions, handle, canEdit, worldId }: {
   // Every write goes through `actions` — that IS the save.
   const setPart = (category: Category, id: string) => actions.map("parts").set(category, id)
   const setColor = (group: ColorGroup, hex: string) => actions.map("colors").set(group, hex)
+  const setOffset = (category: Category, dy: number) => actions.map("offsets").set(category, dy)
   const dragColor = (group: ColorGroup, hex: string) => setDraft({ group, hex })
   const dropUncommitted = useCallback(
     (group: ColorGroup) => setDraft((d) => (d && d.group === group && d.from === undefined ? null : d)),
@@ -274,6 +365,7 @@ function PortraitMaker({ data, actions, handle, canEdit, worldId }: {
     const next = randomLook(look)
     actions.transact(() => { // one undo step, one sync message
       for (const layer of LAYERS) setPart(layer.id, next.parts[layer.id])
+      for (const layer of LAYERS) if (layer.movable) setOffset(layer.id, next.offsets[layer.id])
       for (const group of COLOR_GROUPS) setColor(group, next.colors[group])
     })
   }
@@ -289,7 +381,12 @@ function PortraitMaker({ data, actions, handle, canEdit, worldId }: {
 
   const layer = LAYERS.find((l) => l.id === tab)!
   const selected = findPart(look.parts[tab])
-  const groups = selected?.zones ?? []
+  // One row per color the piece follows: named after its region ("Tie") when it
+  // has one, else after the group ("Skin"). A group shows once even if used twice.
+  const colorRows: { group: ColorGroup; label: string }[] = []
+  for (const g of selected?.zones ?? []) colorRows.push({ group: g, label: t(`group.${g}`) })
+  for (const r of selected?.regions ?? []) colorRows.push({ group: r.group, label: t(`region.${r.label}`) })
+  const rows = colorRows.filter((row, i) => colorRows.findIndex((o) => o.group === row.group) === i)
 
   return (
     <div ref={rootRef} className={"pm" + (narrow ? " pm-narrow" : "")} style={{ "--pm-accent": accent } as CSSProperties}>
@@ -301,21 +398,27 @@ function PortraitMaker({ data, actions, handle, canEdit, worldId }: {
           <div className="pm-mat"><PixelCanvas image={portrait} scale={scale} /></div>
         </div>
         {canEdit && (
-          <div className="pm-actions">
-            <button type="button" className="pm-button" onClick={randomize}>{t("action.randomize")}</button>
-            <button type="button" className="pm-button" onClick={download} disabled={!portrait}>{t("action.download")}</button>
-          </div>
-        )}
-        {canEdit && (
           <CardAction portrait={portrait} cardId={data.cardId ?? null} worldId={worldId}
-            onLinked={(id) => actions.set("cardId", id)} onShow={showCard} />
+            onLinked={(id) => actions.set("cardId", id)} onShow={showCard}
+            before={
+              <button type="button" className="pm-button pm-icon-button" onClick={randomize}
+                aria-label={t("action.randomize")} title={t("action.randomize")}>
+                <ShuffleIcon />
+              </button>
+            }
+            after={
+              <button type="button" className="pm-button pm-icon-button" onClick={download} disabled={!portrait}
+                aria-label={t("action.download")} title={t("action.download")}>
+                <DownloadIcon />
+              </button>
+            } />
         )}
       </div>
 
       {canEdit && (
         <div className="pm-controls">
           <div className="pm-tabs" role="tablist">
-            {LAYERS.map((l) => (
+            {SHOWN_LAYERS.map((l) => (
               <button key={l.id} type="button" role="tab" aria-selected={l.id === tab} className="pm-tab" onClick={() => setTab(l.id)}>
                 {t(`layer.${l.id}`)}
               </button>
@@ -334,11 +437,15 @@ function PortraitMaker({ data, actions, handle, canEdit, worldId }: {
             ))}
           </div>
 
+          {layer.movable && (
+            <OffsetControl value={look.offsets[tab]} onChange={(dy) => setOffset(tab, dy)} />
+          )}
+
           {selected && (
             <div className="pm-colors">
-              {groups.length === 0 && <p className="pm-hint">{t("piece.noColors")}</p>}
-              {groups.map((g) => (
-                <ColorRow key={g} label={t(`group.${g}`)} value={shown.colors[g]} palette={PALETTES[g]}
+              {rows.length === 0 && <p className="pm-hint">{t("piece.noColors")}</p>}
+              {rows.map(({ group: g, label }) => (
+                <ColorRow key={g} label={label} value={shown.colors[g]} palette={PALETTES[g]}
                   onPick={(hex) => commitColor(g, hex)} onDrag={(hex) => dragColor(g, hex)}
                   onClosePicker={() => dropUncommitted(g)} />
               ))}
@@ -356,19 +463,23 @@ function PortraitMaker({ data, actions, handle, canEdit, worldId }: {
 
 const CSS = `
 .pm { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 28px; align-items: start;
-  width: 100%; box-sizing: border-box; padding: 20px 4px 32px; color: inherit; font: inherit; }
+  width: 100%; height: 100%; min-height: 100%; overflow-y: auto; box-sizing: border-box;
+  padding: 28px clamp(16px, 3vw, 40px) 40px; color: inherit; font: inherit;
+  /* With surface "plain" the world shows through; give ourselves the frosted backdrop. */
+  background: color-mix(in srgb, var(--background, #16110b) 72%, transparent);
+  backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px); }
 .pm-narrow { grid-template-columns: minmax(0, 1fr); justify-items: center; }
 .pm-stage { display: grid; gap: 14px; justify-items: center; }
 
-.pm-frame { padding: 10px; border-radius: 6px;
-  background: linear-gradient(160deg, #4a3826, #2a1f15 55%, #3a2b1d);
-  box-shadow: inset 0 0 0 1px rgba(255, 222, 170, 0.28), inset 0 0 0 4px #1b130c,
-    inset 0 0 0 5px color-mix(in srgb, var(--pm-accent) 70%, transparent),
-    0 1px 0 rgba(255,255,255,0.06), 0 18px 40px rgba(0, 0, 0, 0.45); }
-.pm-mat { padding: 6px; background: #120d09; box-shadow: inset 0 2px 6px rgba(0,0,0,0.7); line-height: 0; }
+.pm-frame { border-radius: 12px; overflow: hidden; line-height: 0; box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35); }
+.pm-mat { line-height: 0; }
 .pm-pixels { display: block; image-rendering: pixelated; image-rendering: crisp-edges; }
 
-.pm-actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
+.pm-actions { display: flex; gap: 8px; align-items: center; justify-content: center; }
+.pm-actions .pm-button { height: 40px; box-sizing: border-box; }
+.pm-icon-button { width: 40px; padding: 0; display: inline-flex; align-items: center; justify-content: center; }
+.pm-icon-button svg { width: 18px !important; height: 18px !important; flex: none; }
+.pm-icon-button svg circle[fill="currentColor"] { fill: currentColor; }
 .pm-button { padding: 9px 18px; border-radius: 10px; border: 1px solid rgba(127,127,127,0.4); background: transparent;
   color: inherit; font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; }
 .pm-button:hover { background: rgba(127,127,127,0.12); }
@@ -404,11 +515,29 @@ const CSS = `
 .pm-tab:hover { opacity: 1; background: rgba(127,127,127,0.1); }
 .pm-tab[aria-selected="true"] { opacity: 1; border-color: rgba(127,127,127,0.35); background: rgba(127,127,127,0.14); }
 
-.pm-pieces { display: flex; flex-wrap: wrap; gap: 10px; }
+/* Pieces scroll inside their own area (two rows, with a peek of the third so the
+   scroll is discoverable), so a long list never pushes the colors out of view. */
+.pm-pieces { display: flex; flex-wrap: wrap; gap: 10px; align-content: flex-start;
+  max-height: 300px; overflow-y: auto; padding: 2px 6px 2px 2px; margin: -2px -6px -2px -2px;
+  overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: rgba(127,127,127,0.4) transparent; }
 .pm-piece { padding: 4px; line-height: 0; border-radius: 10px; border: 1px solid rgba(127,127,127,0.25);
   background: rgba(127,127,127,0.08); cursor: pointer; }
 .pm-piece:hover { border-color: rgba(127,127,127,0.6); }
+.pm-piece-none { width: ${WIDTH + 10}px; height: ${HEIGHT + 10}px; box-sizing: border-box; line-height: 1.2;
+  display: inline-flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px;
+  border-style: dashed; color: inherit; font: inherit; font-size: 13px; opacity: 0.8; }
+.pm-piece-none svg { width: 22px !important; height: 22px !important; }
 .pm-piece[aria-pressed="true"] { border-color: var(--pm-accent); box-shadow: 0 0 0 1px var(--pm-accent); }
+
+.pm-offset { display: flex; align-items: center; gap: 6px; margin-top: -4px; }
+.pm-offset .pm-label { margin-right: 4px; }
+.pm-offset-step { width: 30px; height: 28px; padding: 0; border-radius: 8px; border: 1px solid rgba(127,127,127,0.3);
+  background: rgba(127,127,127,0.08); color: inherit; font-size: 11px; cursor: pointer; }
+.pm-offset-step:hover:not(:disabled) { border-color: rgba(127,127,127,0.6); }
+.pm-offset-step:disabled { opacity: 0.35; cursor: default; }
+.pm-offset-value { min-width: 34px; padding: 0 4px; border: 0; background: none; color: inherit; font: inherit;
+  font-size: 13.5px; font-variant-numeric: tabular-nums; text-align: center; cursor: pointer; }
+.pm-offset-step:focus-visible, .pm-offset-value:focus-visible { outline: 2px solid var(--pm-accent); outline-offset: 2px; }
 
 .pm-colors { display: grid; gap: 12px; padding-top: 4px; border-top: 1px solid rgba(127,127,127,0.2); }
 .pm-color-row { display: grid; gap: 6px; padding-top: 8px; }
@@ -457,5 +586,8 @@ export default defineTool({
   name: "Portrait Maker",
   documentTypes: ["portrait"],
   needs: [],
+  // "plain": we own the whole tab instead of the host's fixed-width frosted
+  // "panel" card, so the editor uses all the space it is given.
+  surface: "plain",
   render: PortraitView,
 })

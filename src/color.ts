@@ -68,11 +68,77 @@ export function hexToHsv(hex: string): HSV {
   return { h: (h * 60 + 360) % 360, s: max ? d / max : 0, v: max }
 }
 
-/** The user's color becomes the MID tone; light and dark are derived from it. */
-export function makeRamp(hex: string): [RGB, RGB, RGB] {
+/**
+ * The artist's own shading for a color group: the tones they painted with
+ * (light, mid, dark, and optionally darkest), and which of them the user's pick
+ * stands for (`anchor`, usually the dominant tone, so the swatch you click is
+ * the color you see on the face). Without a darkest tone, one is extrapolated
+ * by repeating the mid → dark step; without a highlight, by repeating mid → light.
+ */
+export type ArtRamp = {
+  tones: [string, string, string] | [string, string, string, string]
+  highlight?: string
+  anchor: 0 | 1 | 2
+}
+
+type HSL = [number, number, number]
+
+/**
+ * The user's color → a 5-tone ramp [light, mid, dark, darkest, highlight].
+ *
+ * With an `art` ramp, each tone keeps the SAME distance from the user's pick
+ * that it has from the anchor in the artist's original (hue shift, saturation
+ * ratio, lightness step) — so the default color reproduces the drawing exactly,
+ * and any other color is shaded the way the artist shades.
+ * Without one, the user's color is the mid tone and a generic shading is used.
+ */
+/**
+ * The user's color, moved the way `tone` sits relative to `anchor` in the
+ * artist's drawing (hue shift, saturation ratio, lightness step).
+ */
+function shiftLike([h, s, l]: HSL, [ah, as, al]: HSL, [th, ts, tl]: HSL): RGB {
+  const sat = as > 0 ? s * (ts / as) : ts
+  // Lightness as a PROPORTION, not a fixed step: a shadow is "x% of the way
+  // to black", a highlight "x% of the way to white". So near-black hair still
+  // gets visible shading instead of collapsing to pure black.
+  const light = tl < al ? l * (tl / al) : al < 1 ? l + (1 - l) * ((tl - al) / (1 - al)) : l
+  return hslToRgb((h + (th - ah) + 360) % 360, clamp01(sat), clamp01(light))
+}
+
+/**
+ * Repaint an artist's own tones with the user's color: `tones[0]` becomes
+ * exactly `hex`, and every other tone keeps its distance from `tones[0]`.
+ * So the drawing's own colors reproduce it exactly, and any other pick is
+ * shaded the way the artist shaded.
+ */
+export function shadeLike(hex: string, tones: string[]): RGB[] {
+  const pick = rgbToHsl(hexToRgb(hex))
+  const hsl = tones.map((t) => rgbToHsl(hexToRgb(t)))
+  return hsl.map((tone) => shiftLike(pick, hsl[0], tone))
+}
+
+export function makeRamp(hex: string, art?: ArtRamp): RGB[] {
+  if (art) {
+    const [h, s, l] = rgbToHsl(hexToRgb(hex))
+    const tones: HSL[] = art.tones.map((t) => rgbToHsl(hexToRgb(t)))
+    if (tones.length === 3) {
+      const [mh, ms, ml] = tones[1]
+      const [dh, ds, dl] = tones[2]
+      tones.push([dh + (dh - mh), ms > 0 ? ds * (ds / ms) : ds, ml > 0 ? dl * (dl / ml) : dl])
+    }
+    if (art.highlight) tones.push(rgbToHsl(hexToRgb(art.highlight)))
+    else {
+      const [mh, ms, ml] = tones[1]
+      const [lh, ls, ll] = tones[0]
+      tones.push([lh + (lh - mh), ms > 0 ? ls * (ls / ms) : ls, ml < 1 ? ll + (1 - ll) * ((ll - ml) / (1 - ml)) : ll])
+    }
+    return tones.map((tone) => shiftLike([h, s, l], tones[art.anchor], tone))
+  }
   const mid = hexToRgb(hex)
   const [h, s, l] = rgbToHsl(mid)
   const light = hslToRgb(hueToward(h, 50, 8), clamp01(s * 0.95), clamp01(l + 0.13))
   const dark = hslToRgb(hueToward(h, 250, 12), clamp01(s * 1.05 + 0.03), clamp01(l - 0.17))
-  return [light, mid, dark]
+  const darkest = hslToRgb(hueToward(h, 250, 20), clamp01(s * 1.1 + 0.05), clamp01(l - 0.32))
+  const highlight = hslToRgb(hueToward(h, 50, 14), clamp01(s * 0.9), clamp01(l + 0.24))
+  return [light, mid, dark, darkest, highlight]
 }
